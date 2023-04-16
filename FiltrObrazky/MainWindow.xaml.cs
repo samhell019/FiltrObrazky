@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -72,8 +73,6 @@ namespace FiltrObrazky
                 blurEffect.Radius = blurAmount;
                 myImage.Effect = blurAmount > 0 ? blurEffect : null;
             });
-
-
         }
 
         private void Button_Click_Zpet(object sender, RoutedEventArgs e)
@@ -90,6 +89,18 @@ namespace FiltrObrazky
 
         private void Button_Click_Cernobile(object sender, RoutedEventArgs e)
         {
+            //FormatConvertedBitmap grayBitmap = new FormatConvertedBitmap();
+            //grayBitmap.BeginInit();
+            //grayBitmap.DestinationFormat = PixelFormats.Gray8;
+            //grayBitmap.Source = (BitmapSource)myImage.Source;
+            //grayBitmap.EndInit();
+
+            //myImage.Source = grayBitmap;
+
+            //history.Add(() =>
+            //{
+            //    myImage.Source = grayBitmap.Source;
+            //});
             FormatConvertedBitmap grayBitmap = new FormatConvertedBitmap();
             grayBitmap.BeginInit();
             grayBitmap.DestinationFormat = PixelFormats.Gray8;
@@ -102,6 +113,25 @@ namespace FiltrObrazky
             {
                 myImage.Source = grayBitmap.Source;
             });
+
+            int width = grayBitmap.PixelWidth;
+            int height = grayBitmap.PixelHeight;
+            byte[] pixels = new byte[width * height];
+
+            grayBitmap.CopyPixels(pixels, width, 0);
+
+            Parallel.ForEach(Partitioner.Create(0, pixels.Length), range =>
+            {
+                for (int i = range.Item1; i < range.Item2; i++)
+                {
+                    byte gray = pixels[i];
+                    pixels[i] = gray;
+                }
+            });
+
+            BitmapSource bitmapSource = BitmapSource.Create(width, height, 96, 96, PixelFormats.Gray8, null, pixels, width);
+            myImage.Source = bitmapSource;
+
 
         }
 
@@ -119,46 +149,98 @@ namespace FiltrObrazky
         }
 
         private void Button_Click_Negativ(object sender, RoutedEventArgs e)
+        //{
+        //    {
+        //        BitmapImage bitmapImage = myImage.Source as BitmapImage;
+
+        //        if (bitmapImage == null)
+        //        {
+        //            return;
+        //        }
+
+        //        WriteableBitmap writeableBitmap = new WriteableBitmap(bitmapImage);
+
+        //        int width = writeableBitmap.PixelWidth;
+        //        int height = writeableBitmap.PixelHeight;
+
+        //        int[] pixels = new int[width * height];
+
+        //        writeableBitmap.CopyPixels(pixels, width * 4, 0);
+
+        //        for (int i = 0; i < pixels.Length; i++)
+        //        {
+        //            int pixel = pixels[i];
+
+        //            byte a = (byte)(pixel >> 24);
+        //            byte r = (byte)(255 - (pixel >> 16 & 0xff));
+        //            byte g = (byte)(255 - (pixel >> 8 & 0xff));
+        //            byte b = (byte)(255 - (pixel & 0xff));
+
+        //            pixels[i] = (a << 24) | (r << 16) | (g << 8) | b;
+        //        }
+
+        //        BitmapSource bitmapSource = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, width * 4);
+
+        //        myImage.Source = bitmapSource;
+
+        //        history.Add(() =>
+        //        {
+        //            myImage.Source = bitmapImage;
+        //        });
+
+        //    }
+        //}
+
         {
+            BitmapImage bitmapImage = myImage.Source as BitmapImage;
+
+            if (bitmapImage == null)
             {
-                BitmapImage bitmapImage = myImage.Source as BitmapImage;
-
-                if (bitmapImage == null)
-                {
-                    return;
-                }
-
-                WriteableBitmap writeableBitmap = new WriteableBitmap(bitmapImage);
-
-                int width = writeableBitmap.PixelWidth;
-                int height = writeableBitmap.PixelHeight;
-
-                int[] pixels = new int[width * height];
-
-                writeableBitmap.CopyPixels(pixels, width * 4, 0);
-
-                for (int i = 0; i < pixels.Length; i++)
-                {
-                    int pixel = pixels[i];
-
-                    byte a = (byte)(pixel >> 24);
-                    byte r = (byte)(255 - (pixel >> 16 & 0xff));
-                    byte g = (byte)(255 - (pixel >> 8 & 0xff));
-                    byte b = (byte)(255 - (pixel & 0xff));
-
-                    pixels[i] = (a << 24) | (r << 16) | (g << 8) | b;
-                }
-
-                BitmapSource bitmapSource = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, width * 4);
-
-                myImage.Source = bitmapSource;
-
-                history.Add(() =>
-                {
-                    myImage.Source = bitmapImage;
-                });
-
+                return;
             }
+
+            WriteableBitmap writeableBitmap = new WriteableBitmap(bitmapImage);
+
+            int width = writeableBitmap.PixelWidth;
+            int height = writeableBitmap.PixelHeight;
+
+            int[] pixels = new int[width * height];
+
+            writeableBitmap.CopyPixels(pixels, width * 4, 0);
+
+            int blockHeight = height / Environment.ProcessorCount;
+
+            Parallel.For(0, Environment.ProcessorCount, i =>
+            {
+                int startY = i * blockHeight;
+                int endY = (i == Environment.ProcessorCount - 1) ? height : (i + 1) * blockHeight;
+
+                for (int y = startY; y < endY; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        int index = y * width + x;
+
+                        int pixel = pixels[index];
+
+                        byte a = (byte)(pixel >> 24);
+                        byte r = (byte)(255 - (pixel >> 16 & 0xff));
+                        byte g = (byte)(255 - (pixel >> 8 & 0xff));
+                        byte b = (byte)(255 - (pixel & 0xff));
+
+                        pixels[index] = (a << 24) | (r << 16) | (g << 8) | b;
+                    }
+                }
+            });
+
+            BitmapSource bitmapSource = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, width * 4);
+
+            myImage.Source = bitmapSource;
+
+            history.Add(() =>
+            {
+                myImage.Source = bitmapImage;
+            });
         }
 
         private void Button_Click_Ulozit(object sender, RoutedEventArgs e)
@@ -236,7 +318,7 @@ namespace FiltrObrazky
         {
             //pridani nahodnych barevnych kolecek na obrazek
             BitmapImage bitmapImage = myImage.Source as BitmapImage;
-            
+
 
         }
 
